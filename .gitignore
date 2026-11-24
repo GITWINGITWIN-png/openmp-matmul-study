@@ -1,0 +1,8 @@
+# Python
+.venv/
+__pycache__/
+# build outputs (make, bench/run_bench.py, report/build_report.py)
+*.o
+parallel/parallel
+bench/build/
+report/build/

@@ -1,0 +1,46 @@
+% preamble.tex — ส่วนหัวที่ build_report.py ใส่ให้ทุกครั้ง (pandoc -H)
+
+% ---- ภาษาไทย -----------------------------------------------------------
+\XeTeXlinebreaklocale "th"
+\XeTeXlinebreakskip = 0pt plus 0.15em minus 0.02em
+\emergencystretch=2.2em
+\linespread{1.28}
+
+\renewcommand{\figurename}{รูปที่}
+\renewcommand{\tablename}{ตารางที่}
+\renewcommand{\contentsname}{สารบัญ}
+\renewcommand{\listfigurename}{สารบัญรูป}
+\renewcommand{\listtablename}{สารบัญตาราง}
+
+% ---- สี / หัวข้อ ---------------------------------------------------------
+\usepackage{xcolor}
+\definecolor{accent}{HTML}{1C5CAB}
+\usepackage{titlesec}
+\titleformat{\section}{\Large\bfseries\color{accent}}{\thesection}{0.8em}{}
+\titleformat{\subsection}{\large\bfseries\color{accent}}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries}{\thesubsubsection}{0.6em}{}
+\titlespacing*{\section}{0pt}{1.6em}{0.6em}
+\titlespacing*{\subsection}{0pt}{1.2em}{0.4em}
+
+% ---- รูป / ตาราง ----------------------------------------------------------
+\usepackage{needspace}
+\usepackage{float}
+\floatplacement{figure}{H}
+\usepackage{caption}
+\captionsetup{font=small,labelfont=bf,labelsep=space,width=0.92\textwidth}
+
+% ---- โค้ด ---------------------------------------------------------------
+\usepackage{fvextra}
+\DefineVerbatimEnvironment{Highlighting}{Verbatim}{breaklines,breakanywhere,commandchars=\\\{\}}
+
+\usepackage{xurl}
+
+% ---- หัว/ท้ายกระดาษ -------------------------------------------------------
+\usepackage{fancyhdr}
+\pagestyle{fancy}
+\fancyhf{}
+\fancyhead[L]{\small\color{gray}OS Report 2026}
+\fancyhead[R]{\small\color{gray}\reportheaderright}
+\fancyfoot[C]{\small\thepage}
+\renewcommand{\headrulewidth}{0.4pt}
+\fancypagestyle{plain}{\fancyhf{}\fancyfoot[C]{\small\thepage}\renewcommand{\headrulewidth}{0pt}}

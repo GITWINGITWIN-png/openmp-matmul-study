@@ -1,0 +1,6 @@
+numpy
+matplotlib
+pandas
+psutil
+tabulate
+pypandoc_binary  # only to rebuild the report
