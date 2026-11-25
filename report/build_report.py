@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""แปลง report.md → PDF ด้วย pandoc + XeLaTeX (ภาษาไทย, บรรณานุกรม IEEE, อ้างอิงรูป/ตาราง)"""
+"""Convert report.md to PDF with pandoc and XeLaTeX (IEEE bibliography, figure and table references)."""
 import re
 import shutil
 import subprocess
@@ -18,8 +18,8 @@ PANDOC_VARS = {
     "classoption": "11pt",
     "papersize": "a4",
     "geometry": "margin=2.5cm",
-    "mainfont": "Sarabun",
-    "sansfont": "Sarabun",
+    "mainfont": "TeX Gyre Pagella",
+    "sansfont": "DejaVu Sans",
     "monofont": "DejaVu Sans Mono",
     "monofontoptions": "Scale=0.82",
     "colorlinks": "true",
@@ -28,8 +28,8 @@ PANDOC_VARS = {
     "citecolor": "accent",
     "toccolor": "black",
     "biblio-style": "ieee",
-    "biblio-title": "เอกสารอ้างอิง",
-    "toc-title": "สารบัญ",
+    "biblio-title": "References",
+    "toc-title": "Contents",
 }
 
 
@@ -49,13 +49,13 @@ def lint(md_path, text):
     body = re.sub(r"<!--.*?-->", "", text, flags=re.S)
     todos = len(re.findall(r"\[TODO", body))
     if todos:
-        print(f"  ⚠️  ยังเหลือ [TODO …] {todos} จุด (จะไปโผล่ใน PDF)")
+        print(f"  warning: {todos} [TODO …] markers left (they will show in the PDF)")
     for img in re.findall(r"!\[[^\]]*\]\(([^)\s]+)", body):
         if img.lower().endswith(".gif"):
-            print(f"  ❌ {img}: PDF ใส่ GIF ไม่ได้ → ใช้ still_*.png แทน")
+            print(f"  error: {img}: a PDF cannot hold a GIF; use a still_*.png instead")
             ok = False
         elif not (md_path.parent / img).exists():
-            print(f"  ❌ ไม่พบรูป {img}")
+            print(f"  error: image not found: {img}")
             ok = False
     return ok
 
@@ -70,7 +70,7 @@ def main():
     meta = front_matter(text)
     print(f"build {md_path.name}")
     if not lint(md_path, text):
-        sys.exit("หยุด: แก้ปัญหาด้านบนก่อน")
+        sys.exit("stopped: fix the problems above first")
 
     BUILD.mkdir(exist_ok=True)
     right = ", ".join(x for x in (meta.get("author", ""), meta.get("student-id", "")) if x)
@@ -99,14 +99,14 @@ def main():
         log = (BUILD / "report.log").read_text(errors="ignore") if (BUILD / "report.log").exists() else r.stdout
         errors = [l for l in log.splitlines() if l.startswith("!") or "Error" in l][:10]
         print("\n".join(errors) or r.stdout[-2000:])
-        sys.exit(f"xelatex ล้มเหลว — ดู {BUILD / 'report.log'}")
+        sys.exit(f"xelatex failed; see {BUILD / 'report.log'}")
     log = (BUILD / "report.log").read_text(errors="ignore")
     missing = sorted(set(re.findall(r"Missing character: There is no (.+?) in font", log)))
     if missing:
-        print(f"  ⚠️  ฟอนต์ไม่มีตัวอักษร: {' '.join(missing[:10])} (อักษรเหล่านี้จะหายจาก PDF)")
+        print(f"  warning: characters missing from the font: {' '.join(missing[:10])} (they will be dropped from the PDF)")
     undefined = sorted(set(re.findall(r"Reference `([^']+)' on page \d+ undefined", log)))
     if undefined:
-        print(f"  ⚠️  อ้างอิงที่ไม่มีอยู่จริง: {', '.join(undefined)}")
+        print(f"  warning: undefined references: {', '.join(undefined)}")
 
     print("  3/3 copy")
     pdf = BUILD / "report.pdf"

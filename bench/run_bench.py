@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-"""รัน benchmark ของ parallel/parallel.c แล้วเขียนผลลง data/<exp>.csv
+"""Run the benchmarks of parallel/parallel.c and write the results to data/<exp>.csv.
 
-การทดลอง (ตรงกับข้อ 2a–2e ของโจทย์):
-  scaling   a+b  threads × n × algo — ข้อมูลหลักสำหรับ speedup / Amdahl / หน่วยความจำ (2e)
-  block     c    ขนาด tile ของ blocked
+Experiments (parts 2a to 2e of the assignment):
+  scaling   a+b  threads × n × algorithm; the main data for speedup, Amdahl and memory (2e)
+  block     c    tile size of the blocked algorithm
   schedule  c    OpenMP loop schedule (static / dynamic / guided + chunk)
-  compiler  c    ระดับ optimisation ของ gcc (-O0 … -O3 -march=native)
+  compiler  c    gcc optimisation level (-O0 … -O3 -march=native)
   os        d    affinity (OMP_PROC_BIND/OMP_PLACES), taskset (SMT, CCD), power profile,
-                 OMP_STACKSIZE, การแย่ง CPU กับโปรเซสอื่น
+                 OMP_STACKSIZE, CPU contention from another process
 
-วิธีใช้ (จากโฟลเดอร์บนสุดของ repo):
-  .venv/bin/python bench/run_bench.py --exp all            # รันทั้งหมด (~1 ชม.)
-  .venv/bin/python bench/run_bench.py --exp scaling,block   # เลือกบางชุด
-  .venv/bin/python bench/run_bench.py --exp all --dry-run   # แค่นับจำนวนรัน
+Usage (from the top of the repo):
+  .venv/bin/python bench/run_bench.py --exp all            # everything (about 1 hour)
+  .venv/bin/python bench/run_bench.py --exp scaling,block   # selected sets
+  .venv/bin/python bench/run_bench.py --exp all --dry-run   # only count the runs
 
-รันซ้ำได้: แถวที่มีใน CSV แล้วจะถูกข้าม (ถ้าอยากรันใหม่ ลบ CSV ของชุดนั้นทิ้ง)
-DO NO HARM: ทุกรันมี timeout · power profile ถูกคืนค่าเดิมใน finally · ไม่ใช้ sudo
+Re-runnable: rows already in a CSV are skipped (delete a set's CSV to measure it again).
+Do no harm: every run has a timeout, the power profile is restored in `finally`, and sudo is never used.
 """
 import argparse
 import csv
@@ -223,7 +223,7 @@ def exp_os():
     # (3) OMP_STACKSIZE
     for ss in ["1M", "8M", "64M"]:
         runs.append(Run("os", f"stack:{ss}", 1600, 32, "blocked", stacksize=ss))
-    # (4) แย่ง CPU
+    # (4) CPU contention
     bg = [str(build("O3native")), "-n", "3200", "-t", "16", "-a", "ijk", "-r", "20"]
     for t in [16, 32]:
         runs.append(Run("os", "contention:none", 3200, t, "blocked"))

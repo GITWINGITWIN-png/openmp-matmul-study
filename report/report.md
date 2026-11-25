@@ -1,89 +1,89 @@
 ---
 title: "OS Report 2026"
-subtitle: "Parallel Matrix Multiplication และ Memory Map Visualization"
-author: "กวินภพ จันเจือ"
-course: "01204332 ระบบปฏิบัติการ (Operating Systems)"
-semester: "ภาคต้น ปีการศึกษา 2569"
-institution: "ภาควิชาวิศวกรรมคอมพิวเตอร์ คณะวิศวกรรมศาสตร์ มหาวิทยาลัยเกษตรศาสตร์"
-date: "27 ตุลาคม 2569"
+subtitle: "Parallel Matrix Multiplication and Memory Map Visualization"
+author: "Kawinphop Junjuae"
+course: "01204332 Operating Systems"
+semester: "First semester, academic year 2026"
+institution: "Department of Computer Engineering, Faculty of Engineering, Kasetsart University"
+date: "27 October 2026"
 ---
 
-# บทนำ {#sec:intro}
+# Introduction {#sec:intro}
 
-รายงานฉบับนี้เป็นการศึกษาผลของการออกแบบโปรแกรมคำนวนเมทริกด้วยการทำ parallel โดยมีเป้าหมายเพื่อตอบคำถามหลัก 3 ข้อได้แก่ผลของการเลือกใช้ algorithm ในการแคชข้อมูลเพื่อทำการคูณเมตริก โดยดูที่ผลต่างความเร็วผลลัพท์ กระบวนการ และสาเหตุของความแตกต่างที่เกิดขึ้น ผลและประสิทธิภาพของการเพิ่มเธรดในการประมวลผลคำตอบ ว่าการเพิ่มเธรดให้มีจำนวนมากขึ้นจะสามารถเพิ่มความเร็วการประมวลผลได้อย่างไม่มีขีดจำกัดจริงหรือไม่ และกระบวนการจองหน่วยความจำ stack ของระบบและ RAM ว่ามีขนาดเท่ากันเสนอหรือไม่เพราะอะไร
+This report studies how the design of a parallel matrix multiplication program affects its speed. It asks three questions. First, how does the loop order, which decides how data moves through the cache, change the speed of the multiplication, and why? Second, how much do extra threads help, and can adding threads keep making the program faster without limit? Third, how does the system reserve stack memory and RAM, and is the reserved amount the same as the amount used?
 
-# สภาพแวดล้อมการทดลอง {#sec:env}
+# Test environment {#sec:env}
 
-การทดลองนี้จัดทำขึ้นบนคอมพิวเตอร์ส่วนตัว(AMD Ryzen 9 8945HX 16 core / 32 thread 2 CCD) หน่วยความจำ 30 GB บนระบบปฏิบัติการ Ubuntu 26.04.1 LTS ตั้ง CPU gvernor เป็น performance เสียบสายชาร์จตลิดการทดลอง [@amd8945hx]
+The experiments ran on a personal computer (AMD Ryzen 9 8945HX, 16 cores and 32 threads on 2 CCDs) with 30 GB of memory, running Ubuntu 26.04.1 LTS, with the CPU governor set to performance and the charger plugged in for the whole experiment [@amd8945hx].
 
 \needspace{25\baselineskip}
 
-| รายการ         | ค่า                                                                                                    |
-| -------------- | ------------------------------------------------------------------------------------------------------ |
-| CPU            | AMD Ryzen 9 8945HX · 16 core / 32 thread · 2 CCD                                                       |
-| Cache          | L1d 32 KB/core · L2 1 MB/core · L3 32 MB/CCD (รวม 64 MB)                                               |
-| RAM            | 30 GB                                                                                                  |
-| OS / kernel    | Ubuntu 26.04.1 LTS · Linux 7.0.0-38-generic                                                            |
-| Compiler       | gcc 15.2.0 (`-O3 -march=native -fopenmp`) · OpenMP runtime = libgomp                                   |
-| glibc / Python | 2.43 / 3.14.4                                                                                          |
-| การตั้งค่า     | governor = performance · boost = on · power profile = performance · เสียบไฟ AC · `ulimit -s` = 8192 KB |
-| ผัง CPU        | CPU 0–15 = core จริง 0–15 · CPU 16–31 = SMT sibling · core 0–7 = CCD0, 8–15 = CCD1                     |
+| Item           | Value                                                                                            |
+| -------------- | ------------------------------------------------------------------------------------------------ |
+| CPU            | AMD Ryzen 9 8945HX, 16 cores / 32 threads, 2 CCDs                                                |
+| Cache          | L1d 32 KB per core, L2 1 MB per core, L3 32 MB per CCD (64 MB total)                             |
+| RAM            | 30 GB                                                                                            |
+| OS / kernel    | Ubuntu 26.04.1 LTS, Linux 7.0.0-38-generic                                                       |
+| Compiler       | gcc 15.2.0 (`-O3 -march=native -fopenmp`), OpenMP runtime libgomp                                |
+| glibc / Python | 2.43 / 3.14.4                                                                                    |
+| Settings       | governor performance, boost on, power profile performance, on AC power, `ulimit -s` = 8192 KB    |
+| CPU layout     | CPUs 0-15 are physical cores 0-15, CPUs 16-31 their SMT siblings; cores 0-7 on CCD0, 8-15 on CCD1 |
 
 : {#tab:env}
 
 ![](assets/cache_hierarchy.png){#fig:cache width=90%}
 
-# อัลกอริทึมและการออกแบบโปรแกรม {#sec:design}
+# Algorithms and program design {#sec:design}
 
-## การเก็บเมทริกซ์ในหน่วยความจำ {#sec:rowmajor}
+## Storing a matrix in memory {#sec:rowmajor}
 
-เพื่อที่จะจัดการเมทริกซ์ในหน่วยความจำได้นั้นจะใช้การหั่นเมทริกซ์ออกมาเป็นแถวทีละแถวเพราะหน่วยความจำมีรูปแบบเป็นลิสต์แถวเดียว 1 มิติจะได้ว่าตำแหน่งของเมทริงหลังหั่นทีละแถวจะหาได้จากสูตร "y*n+x"  เมื่อกำหนดให้ y คือเลขแถว และ  x คือเลขคอลัมม์ในเมทริกซ์ และ n เป็นมิติ(แนวนอน) ของเมทริกซ์ และหน่วยความจำจะเก็บแคชเมตริกซ์นี้ไว้ครั้ง 64 B ต่อ line [@silberschatz2018]
+Memory is a one-dimensional list, so the program stores each matrix row by row. The element in row y and column x of a matrix of width n sits at index y*n+x. The cache loads this array in lines of 64 B [@silberschatz2018].
 
 ![](assets/rowmajor.png){#fig:rowmajor width=95%}
 
-## อัลกอริทึมสามแบบ {#sec:algos}
+## Three algorithms {#sec:algos}
 
-ในการคำนวนผลคูณเมตริกซ์ใช้การคูณแถวเข้ากับคอลัมม์เพื่อให้ได้ผลลัพท์ 1 ช่องนั้นคือมีงานคำนวน 2n และเพื่อให้ได้ครบทุกช่อง n^2 ช่องจะได้ว่ามีงานคำนวน 2*n^3 โดยอัลกอลิทึมที่จะใช้ในการทดลองนี้เลือกมา 3 แบบที่ใช้งานการทำนวนวิธีเดียวกันแต่มีลำดับการเข้าถึงหน่วยความจำไม่เหมือนกันโดยวิธีแรกคือแบบ ijk เป็นการเข้าถึงหน่วยความจำแบบเลือกลงตามคอลลัมม์ได้เมตริกลงมาแต่เนื่องจากหน่วยความจำใช้การเก็บเมตริกแบบตามแถวทำให้ต้องมีการจักดการหน่วยความจำใหม่ทุกครั้งที่มรการเปลี่ยนแถว วิธี ikj เป็นการเข้าถึงหน่วยความจำแบบทีละแถวเข้ากับวิธีที่หน่วยความจำจัดการกับเมตริกมากกว่าทำให้ไม่ต้องมีการจัดการหน่วยความจำเท่าแบบที่แล้ว และวิธีสุดท้ายคือแบบ tile ที่จะแบ่งเมตริกเป็นกระดาน 4 เหลี่ยนม 4 ชิ้นเท่ากันแล้วใช้การคำนวนผลคูณโดยการเลื่อนกระดานไปทีละส่วนจนครบเพื่อหาผลลัพท์ทีละส่วนและนำมาประกอบกันเป็นผลคูณ [@lam1991; @goto2008]
+Each element of the product is one row times one column, which takes 2n operations, so all n^2 elements take 2*n^3. The experiment compares three algorithms that do the same arithmetic in a different memory order. ijk walks down the columns of a matrix, but the matrix is stored by rows, so every step to the next row lands on a different cache line. ikj walks along rows, which matches the storage order and needs far fewer new cache lines. blocked splits the matrices into equal square tiles (four in the illustration), multiplies them tile by tile while sliding over the tiles until each part of the result is complete, and assembles the parts into the product [@lam1991; @goto2008].
 
 ![](assets/still_cache_ijk_vs_ikj.png){#fig:cachesim width=95%}
 
 ![](assets/still_blocked_tiles.png){#fig:blocked width=95%}
 
-## การทำให้ขนานด้วย OpenMP {#sec:openmp}
+## Parallelising with OpenMP {#sec:openmp}
 
-การทำให้ขนานจากภาพการแบ่งพิกเซลลให้แต่ละเธรดจัดการอาจทำให้เกิด race condition ได้จึงใช้วิธีแบ่งตามแถวให้แต่ละเธรดมีพื้นที่ของตัวเองซึ่งระบบมีรูปแบบการแบ่งมาให้ 2 แบบคือ static กับ dynamic โดย static เป็นการแบ่งโดยกำหนดแถวที่แน่นอนให้เธรดตั้งแต่เริ่มต้น และแบบ dynamic ที่มีการแบ่งแถวให้แต่ละเธรดตามความต้องการเมื่อเวลาผ่านไป ในการทดลองนี้เลือกใช้แบบ static เพราะมี overhead น้อยกว่าแบบ dynamic ที่ต้องตรวจสอบและคำนวนการแบ่งแถวในเธรด [@openmp52; @libgomp]
+Splitting the work element by element, as in the picture, could cause race conditions, so the program splits it by rows and gives each thread its own rows. OpenMP offers two ways to do this: static assigns fixed rows to each thread at the start, and dynamic hands out rows on demand as threads finish. The program uses static because it has less overhead than dynamic, which has to track and assign rows while the threads run [@openmp52; @libgomp].
 
 ![](assets/still_omp_static_vs_dynamic.png){#fig:omp width=90%}
 
-## การแบ่งเฟสและการจับเวลา {#sec:phases}
+## Phases and timing {#sec:phases}
 
-การจับเวลาในการทดลองนี้แบ่งเป็น 3 ช่วงคือช่วง init เป็นการคำนวนแบบ serial ช่วง multiply เป็นการคำนวนแบบ parallel ที่เพื่อให้ค่ามีความน่าเชื่อถือจะมีการทำซ้ำหลายครั้งก่อนใช้ค่า median แสดงผล และช่วง verify ที่คำนวนแบบ serial
+Timing is split into three phases: init runs serially; multiply runs in parallel and is repeated several times, with the median reported so the value is reliable; verify runs serially.
 
-## ความปลอดภัยต่อระบบ (DO NO HARM) {#sec:safety1}
+## System safety (do no harm) {#sec:safety1}
 
-เพื่อความปลอดภัยจะมีการจำกัดขนาดเมตริก n <= 20000 และจำนวนเธรดน้อยกว่า CPU ตรวจว่า MemAvailable ก่อนจองไม่เกินครึ่งหนึ่ง ไม่ใช้ root และมีการตั้งค่า OS ดังที่แสดงให้ดูเพื่อการทำซ้ำการทดลอง ทดสอบ guard แล้วว่าป้องกันตามเงื่อนไขได้จริง
+The program caps the matrix size at n <= 20000 and the thread count below the number of CPUs, checks before allocating that it needs no more than half of MemAvailable, never runs as root, and records the OS settings shown here so the experiment can be repeated. The guards were tested and refuse the cases they are meant to refuse.
 
 \needspace{23\baselineskip}
 
-# วิธีการทดลอง {#sec:method}
+# Method {#sec:method}
 
-| ชุด      | ตัวแปรต้น                                                                               | จำนวนรัน |
-| ------------ | ------------------------------------------------------------------------------- | ------------ |
-| scaling  | threads {1,2,4,8,12,16,24,32} × n {100 - 3200} × {ijk, ikj, blocked} (+ n=6400 blocked) | 152      |
-| block    | tile b = 8…512                                                                          | 40       |
-| schedule | `OMP_SCHEDULE` 7 แบบ                                                                    | 84       |
-| compiler | `-O0 … -O3 -march=native`                                                               | 30       |
-| os       | affinity · taskset (SMT/CCD) · `OMP_STACKSIZE` · โปรเซสแย่ง · power profile             | 57       |
+| Set      | Independent variables                                                                     | Runs |
+| -------- | ----------------------------------------------------------------------------------------- | ---- |
+| scaling  | threads {1,2,4,8,12,16,24,32} × n {100-3200} × {ijk, ikj, blocked} (+ n=6400 blocked)     | 152  |
+| block    | tile b = 8…512                                                                            | 40   |
+| schedule | 7 `OMP_SCHEDULE` settings                                                                 | 84   |
+| compiler | `-O0 … -O3 -march=native`                                                                 | 30   |
+| os       | affinity, taskset (SMT/CCD), `OMP_STACKSIZE`, a competing process, power profile          | 57   |
 
 : {#tab:experiments}
 
-ตัวแปรในการทดลองนี้มีตัวแปรต้นตามที่กำหนดไว้ในตามตารางข้างบน(ตาราง 2)โดยแบ่งตัวแปรออกเป็น 5 ชุดโดยในการทดลองแต่ละชุดจะกำหนดให้ชุดตัวแปรที่สนใจเป็นตัวแปรต้น แล้วตัวแปรที่เหลือจะเป็นตัวแปรควบคุม โดยตัวแปรควบคุมนอกจากนี้ยังมี เครื่องคอมพิวเตอร์ที่ใช้ในการทดลอง seed และสภาพการทดลองตามตารางที่ 1 ผลที่ได้จะมีการวัดซ้ำ 5 รอบและเสนอค่า median ที่ได้เป็นผลการทดลองเพราะค่า median จะสะท้อนค่าที่คาดหวังจริงของการทำงานได้ดีกว่าค่ากลางอื่นๆ ในการทดลองนี้ ตัวแปรตามที่สนใจในการทดลองนี้คือเวลาการคำนวนของทั้ง 3 ช่วง GFLOP/s peak RSS VMpeak และอุณหภูมิ
+Table 2 lists the independent variables, grouped into five sets. Each set varies its own variables and holds the others fixed; the machine, the random seed and the conditions in Table 1 are fixed throughout. Every configuration was measured 5 times and the median is reported, because in this experiment the median reflects typical behaviour better than other averages. The dependent variables are the time of each of the three phases, GFLOP/s, peak RSS, VmPeak and temperature.
 
-# ผลการทดลองและการวิเคราะห์ {#sec:results}
+# Results and analysis {#sec:results}
 
-## ผลของจำนวน thread {#sec:threads}
+## Thread count {#sec:threads}
 
-จากรูปที่ 7 จะเห็นว่าหลังจากมีการคำนวนที่ 16 เธรดแล้วความเร็วการคำนวนเพิ่มในระดับที่ความชันลดลงอย่างเห็นได้ชัด ต่างจากช่วงแรกที่เพิ่มเธรดจนถึง 15 เธรดที่ความเร็วการคำนวนมีค่าเพิ่มอย่างเห็นได้ชัด ซึ่งผลการทดลองที่ได้นี้เป็นไปตาม Amdaul rule คือการเพิ่มเธรดเพื่อเพิ่มความเร็วการคำนวนแบบ parallel จะไม่สามารถเพิ่มความเร็วการคำนวนทั้งระบบได้อย่างไม่มีขีดจำกัน เพราะเมื่อถึงจุดหนึ่งเวลาที่ใช้ในการคำนวนแบบ serial จะเข้ามามีอิทธิพลการเวลาคำนวนทั้งหมดแทนดังสมการ Speedup = 1/(s + (1−s)/p) [@amdahl1967] ซึ่งการหาผลของ serial นี้ว่ามีอิทธิพลจริงหรือไม่ แค่ไหนจะทำในเรื่องถัดไป
+Figure 7 shows the speed rising steeply as threads are added up to about 15, and the curve flattening clearly past 16 threads. This matches Amdahl's law: adding threads to the parallel part cannot speed up the whole program without limit, because at some point the serial work dominates the total time, as in Speedup = 1/(s + (1−s)/p) [@amdahl1967]. The Amdahl section below measures how much the serial part matters.
 
 \needspace{17\baselineskip}
 
@@ -92,7 +92,7 @@ date: "27 ตุลาคม 2569"
 | 100 | 3.55 / **0.09** | 1.47 / 1.27 | 1.07 / 1.19 | 0.07 |
 | 800 | 11.07 / 9.33 | 4.26 / 4.24 | 7.00 / 7.85 | 0.44 |
 | 3200 | 10.19 / 12.23 | 8.59 / 12.86 | 9.56 / 12.03 | 0.60 |
-| 6400 | – | – | 11.54 / **13.47** | 0.72 |
+| 6400 | n/a | n/a | 11.54 / **13.47** | 0.72 |
 
 : {#tab:threads}
 
@@ -102,42 +102,42 @@ date: "27 ตุลาคม 2569"
 
 ![](../figures/03_efficiency.png){#fig:efficiency width=100%}
 
-## ผลของขนาดเมทริกซ์ {#sec:size}
+## Matrix size {#sec:size}
 
-จากการวัดผล GFLOP/s ในการทดลองนี้จะเห็นว่าในรูปแบบการเข้าถึงหน่วยความจำทั้ง 3 รูปแบบนี้ให้ผลความเร็วการคำนวนที่ต่างกันอยู่โดยความแตกต่างนี้อาจจะมองเห็นได้ไม่ชัดเจนในการคำนวนด้วย 1 เธรดแต่ความแตกต่างจะชัดเจนขึ้นเมื่อมีการเพิ่มเธรดให้มากขึ้น(จากรูปแสดงผลของ 16 เธรด) จะเห็นได้ว่าวิธีแบบ ijk ช้าที่สุดเนื่องจากวิธีการเข้าถึงหน่วยความจำที่เสียเปล่าและไม่เข้ากับการจัดการหน่วยความจำของเมตริกซ์ แต่จุดที่น่าสนใจคือวิธี ikj และวิธี blocked โดยจะเห็นได้ว่าวิธี ikj มีความเร็วกว่าเมื่อคำนวนเมตริกขนาดน้อยกว่า 800 แต่ช้ากว่าเมื่อเมตริกมีขนาดเพิ่มขึ้นหลังจากนั้น โดยสาเหตุที่เป็นแบบนี้อาจเกิดจากเมื่อเมตตริกมีขนาดใหญ่ขึ้นเรื่อยๆ ก็ยิ่งทำให้การเข้าถึงหน้วยความจำต้องเข้าถึงชั้นลึกมากขึ้น ซึ่งวิธีเข้าถึงแบบรายแถวที่จากแต่เดิม 1 แถวสามารถแคชอยู่ในหน่วยความจำชิ้นเดียวได้อาจทำแบบเดิมไม่ได้และต้องเข้าหน่วยความจำหลายครั้งเพื่อให้คำนวนได้ กลับกันวิธี blocked ที่เก็บเมตริกแบบ tile อาจมีความทนทานต่อการเข้าถึงหน่วยความจำหลายครั้งมากกว่าเนื่อจากวิธีที่เก็บเมตริกซ์มรการเข้าถึงหน่วยความจำหลายครั้งอยู่แล้วแต่มีการเปลี่ยนแคชน้อยครั้งกว่าจึงทำให้ความเร็วไม่ลดลงเหมือนวิธีอื่นๆ [@lam1991]
+The GFLOP/s measurements show the three access patterns running at different speeds. With one thread the gap is small, and it widens as threads are added (the figure shows 16 threads). ijk is the slowest, because its access pattern wastes memory traffic and does not match the row-major layout. The more interesting pair is ikj and blocked: ikj is faster for matrices smaller than 800 and slower beyond that. A likely reason is that a larger matrix pushes accesses deeper into the memory hierarchy. A row that used to fit in one level of cache no longer does, so the row-wise pattern has to go to memory several times to finish its work. blocked holds up better: it already reuses each tile many times and replaces cache contents less often, so its speed does not drop like the others [@lam1991].
 
 \needspace{15\baselineskip}
 
 | GFLOP/s, 1 thread | n=100 | n=400 | n=800 | n=1600 | n=3200 | n=6400 |
 |---|---|---|---|---|---|---|
-| ijk | 4.7 | 3.6 | 3.4 | 2.7 | **1.1** | – |
-| ikj | 19.4 | 17.9 | 18.3 | 15.4 | **5.8** | – |
+| ijk | 4.7 | 3.6 | 3.4 | 2.7 | **1.1** | n/a |
+| ikj | 19.4 | 17.9 | 18.3 | 15.4 | **5.8** | n/a |
 | blocked | 18.3 | 12.5 | 11.8 | 11.8 | 12.0 | 11.9 |
 
 : {#tab:gflops}
 
 ![](../figures/04_gflops_vs_n.png){#fig:gflops width=100%}
 
-## ผลของการตั้งค่าโปรแกรม {#sec:progsettings}
+## Program settings {#sec:progsettings}
 
-ในส่วนการทดลองการตั้งค่าโปรแกรมต่าง ๆ โดยการทดลองนี้กำหนดตัวแปรควบคุมเป็นวิธีการเข้าถึงข้อมูลใช้วิธี blocked
+These experiments fix the access method to blocked.
 
-โดยทำการทดลองปรับขนาด tile เห็นผลดังรูปที่ 10 คือ tile ขนาด 8 แย่ที่สุด ขนาด 192-256 ดีที่สุด เนื่องจาก tile ขนาดที่เล็กเกินไปทำให้ต้องเลื่อน tile หลายครั้งกว่าที่จะให้ผลคูณเมตริกที่สมบูรณ์กลับมาได้
+Varying the tile size (Figure 10) shows that a tile of 8 is the worst and 192-256 is the best. Tiles that are too small have to be moved many more times before the full product is complete.
 
-ทำการทดลองปรับ OpenMP schedule ได้ผลว่าที่ n ขนาดเล็ก(n=400) ค่า GF/s ที่ได้จากวิธีตั้งต่าง ๆ จะมีแนวโน้มที่ไม่เกาะกลุ่มหรือเรียงลำดับแบบเดียวกันเช่น n=400 blocked + (static,guided),16 ได้ 30 GF/s ซึ่งต่าจากอันอื่นที่ n เดียวกันที่จะอยู่ประมาณเกิน 100 GF/s ในขณะที่ n=3200 GF/s ที่ได้ขากวิธีต่างๆ จะเกาะกลุ่มและเรียงลำดับเดียวกันในทุกการตั้งค่า จึงอาจสรุปได้ว่าการตั้งค่ามีอิทธิพลต่อความเร็วการคำนวนน้อยลงที่ n มีขนาดมากขึ้น
+For the OpenMP schedule, at small n (n=400) the GF/s of the different settings scatter with no consistent order. For example, n=400 blocked with (static, guided),16 reaches 30 GF/s, while the other settings at the same n are above about 100 GF/s. At n=3200 the settings cluster together and keep the same order. The schedule setting therefore matters less as n grows.
 
 \needspace{17\baselineskip}
 
-| เทียบ                    | เวลา   |
-| ------------------------ | ------ |
-| n=3200 ijk 16 thread     | 5.53 s |
-| n=3200 blocked 1 thread  | 5.47 s |
-| n=3200 ijk 32 thread     | 4.58 s |
-| n=3200 blocked 32 thread | 0.35 s |
+| Comparison                 | Time   |
+| -------------------------- | ------ |
+| n=3200 ijk, 16 threads     | 5.53 s |
+| n=3200 blocked, 1 thread   | 5.47 s |
+| n=3200 ijk, 32 threads     | 4.58 s |
+| n=3200 blocked, 32 threads | 0.35 s |
 
 : {#tab:compare}
 
-และจากตารางจะเห็นว่าที่ n=3200 ijk 16 thread ใช้เวลา 5.53 วินาทีแต่ที่ n=3200 blocked 1 thread ใช้เวลา 5.47 วินาทีจะเห็นว่าวิธีการเข้าถึงหน่วยความทรงจำมีอิทธิพลต่อความเร็วมากกว่าจำนวนเธรดเห็นได้จากวิธี ijk ที่ 16 นั้นช้ากว่าวิธี blocked ที่ 1 เธรด
+At n=3200, ijk with 16 threads takes 5.53 s and blocked with one thread takes 5.47 s. The memory access pattern matters more than the thread count: ijk on 16 threads is slower than blocked on one.
 
 ![](../figures/05_block_size.png){#fig:block width=75%}
 
@@ -145,28 +145,28 @@ date: "27 ตุลาคม 2569"
 
 ![](../figures/06_schedule_n3200.png){#fig:sched3200 width=80%}
 
-## ผลของการตั้งค่าระบบปฏิบัติการ {#sec:ossettings}
+## Operating system settings {#sec:ossettings}
 
-ผลการทดลองการตั้งค่า OS เทียบ Core กับ SMT ตามรูป 13-14 การใช้ 16 คอร์เร็วกว่า 8 คอร์ + SMTอย่างชัดเจนเนื่องจาก  SMT ต้องแย่งทรัพยากรกับคอร์ที่ใช้ร่วมกัน และการปล่อยให้ OS scheduler กระจายงานเองนั้นให้ผลที่ดีกว่าการปักหมุดเธรดตายตัว
+Comparing physical cores with SMT (Figures 13-14), 16 cores are clearly faster than 8 cores with SMT, because two SMT threads compete for the resources of the core they share. Letting the OS scheduler place the threads also beats pinning them to fixed CPUs.
 
-วิธี ikj บน 2 CCD ทำความเร็วได้ 33.9 GF/s  ซึ่งเร็ซกว่า 1 CCD ที่ได้ 28.9 GF/s เพราะได้พื้นที่ L3 ช่วยลดคอขวดแบนวิดท์หน่วยความจำที่ให้ผลดีกว่า overhead จากกวารข้าม CCD
+ikj on 2 CCDs reaches 33.9 GF/s, faster than the 28.9 GF/s on one CCD, because the second L3 relieves the memory bandwidth bottleneck by more than the cross-CCD overhead costs.
 
-ผลจากการแย่งทรับยากรทำให้ CPU ประสิทธิภาพลดลงเกือบครึ่ง(รูปที่ 15) ซึ่งอาจจะเกิดจาก Context switch ที่ OS ต้องเสียเวลาไปกับการสลับการทำงาน [@silberschatz2018]
+A competing process cuts performance almost in half (Figure 15), most likely because of the context switches the OS has to make between the two [@silberschatz2018].
 
-power profile ส่งผลต่อความเร็วการคำนวนจริงคาดว่ามาจากการที่ OS ลดความถี่นาฬิกาลงทำให้การคำนวช้าลงตามแต่ละโหมด
+The power profile changes the speed, most likely because the OS lowers the clock frequency in the slower modes.
 
-อย่างไรก็ตามการทดลองนี้ทดสอบบนคอมพิวเตอร์ที่เปิด browser, VS code ไว้เบื้อหลังจึงอาจทำให้ผลที่ได้ได้รับผลกระทบไปด้วย ไม่ได้แสดงผลจริงสัมบูรณ์
+The runs were made with a browser and VS Code open in the background, so the results may be affected by them and are not absolute values.
 
 \needspace{21\baselineskip}
 
-| การทดลอง (n=3200) | GFLOP/s |
+| Experiment (n=3200) | GFLOP/s |
 |---|---|
-| taskset 16 thr: **16 core จริง** vs **8 core × 2 SMT** | blocked **140.5 vs 98.9** · ikj 54.2 vs 45.0 |
-| `OMP_PLACES=threads` + `close` (16 thr) | blocked **100.7** (≈ 8 core × SMT 98.9) vs default 137.7 |
+| taskset 16 thr: **16 physical cores** vs **8 cores × 2 SMT** | blocked **140.5 vs 98.9**; ikj 54.2 vs 45.0 |
+| `OMP_PLACES=threads` + `close` (16 thr) | blocked **100.7** (≈ 8 cores × SMT, 98.9) vs default 137.7 |
 | ikj 16 → 32 thr (static) | 54.7 → **88.8** |
-| 1 CCD (8 core) vs 2 CCD (4+4) | blocked 74.6 vs 74.1 · ikj 28.9 vs **33.9** |
-| มีโปรเซส 16 thread แย่ง | 32 thr: **181.4 → 93.7** · 16 thr: 120.9 → 93.6 |
-| power profile performance / balanced / power-saver | blocked 1 thr: 11.9 / 11.9 / **5.9** · 16 thr: 156 / 140 / **86** |
+| 1 CCD (8 cores) vs 2 CCDs (4+4) | blocked 74.6 vs 74.1; ikj 28.9 vs **33.9** |
+| a competing 16-thread process | 32 thr: **181.4 → 93.7**; 16 thr: 120.9 → 93.6 |
+| power profile performance / balanced / power-saver | blocked 1 thr: 11.9 / 11.9 / **5.9**; 16 thr: 156 / 140 / **86** |
 
 : {#tab:os}
 
@@ -178,33 +178,33 @@ power profile ส่งผลต่อความเร็วการคำน
 
 ![](../figures/10_os_power.png){#fig:power width=75%}
 
-## การใช้หน่วยความจำ {#sec:memory}
+## Memory use {#sec:memory}
 
-การใช้ Physical Memory ตรงตามทฤษฎี (3n²·8 B) เช่น n=3200 คำนวนได้ 234.4 MiB วัดได้ 235.9 MiB และ n=6400 คำนวนได้  937.5 MiB วัดได้ 939.5 MiB
+Physical memory use matches the theory (3n² × 8 B). For example, n=3200 should take 234.4 MiB and measured 235.9 MiB, and n=6400 should take 937.5 MiB and measured 939.5 MiB.
 
-VmPeak ขยายขนาดขึ้นตามเธรด แต่ RSS คงที่ ดูที่ n=1600 เมื่อเพิ่มจาก 1 เป็น 32 เธรด VmPeak จะเพิ่มจาก 62 เป็น 310 MiB แต่ RSS คงที่ประมาณ 61 MiB
+VmPeak grows with the thread count while RSS stays flat. At n=1600, going from 1 to 32 threads raises VmPeak from 62 to 310 MiB, while RSS stays near 61 MiB.
 
-การปรับขนาด Stack เป็น 1M, 8M และ 64M ทำให้ VmPeak เปลี่ยนเป็น 93, 310 และ 2046 MiB ตามลำดับ แต่ RSS คงที่ราว 61 MiB และไม่กระทบความเร็ว
+Setting the thread stack size to 1M, 8M and 64M changes VmPeak to 93, 310 and 2046 MiB, while RSS stays near 61 MiB and the speed does not change.
 
-ซึ่งผลที่ได้สามารถอธิบายได้จากการทำ Demand Paging ที่ OS จาก VM ก่อนที่จะจัดสรรให้ RAM จริง [@silberschatz2018]
+Demand paging explains both results: the OS reserves virtual memory first and backs it with real RAM only when a page is touched [@silberschatz2018].
 
 ![](../figures/08_memory_vs_n.png){#fig:memn width=65%}
 
 ![](../figures/08b_memory_vs_threads.png){#fig:memthreads width=65%}
 
-## กฎของ Amdahl: สัดส่วน serial กับ parallel {#sec:amdahl}
+## Amdahl's law: serial and parallel fractions {#sec:amdahl}
 
-จากการวิเคราะห์หาสัดส่วนการทำงานแบบ Serial(s) ด้วยสมการ S(p)= 1/(s + (1−s)/p) [@amdahl1967] เพื่อหาเพดานความเร็วสูงสุดโดยการทำ Least Squares Regression เพื่อหาความชัน(ffit)ได้ผลลัพท์ตามตารางที่ 7 และรูปที่ 19-20
+Fitting S(p) = 1/(s + (1−s)/p) [@amdahl1967] by least squares gives the serial fraction $f_\text{fit}$ and, from it, the speedup ceiling. Table 7 and Figures 19-20 show the results.
 
-เทียบ ffit กับ fmeas ที่ n เล็กค่าทั้งสองจะใกล้เคียงกันแต่เมื่อขยาย n ขึ้นค่าเช่นที่ blocked n=6400 จะได้ ffit = 0.029 ได้เพดานความเร็วเป็น 35 เท่า แต่ fmeas ได้ 0.010 ความต่างนี้น่าจะมาจาก overhead จาก SMT อุณหภูมิหรือหน่วยความจำ
+At small n, $f_\text{fit}$ and $f_\text{meas}$ are close. At larger n they part: blocked at n=6400 gives $f_\text{fit}$ = 0.029, a ceiling of 35×, while $f_\text{meas}$ is 0.010. The gap probably comes from overhead such as SMT, temperature or memory.
 
-จากการคำนวน e(p) จะทำให้เห็นชัดขึ้นว่ามี overhead จริงเพราะ e(p) ไม่คงที่และโตตาม p ทำให้เห็นว่ายิ่งเธรดมาก overhead ของการทำ parallel ก็ยิ่งมากตาม [@karp1990]
+The Karp–Flatt metric e(p) makes the overhead clearer. It is not constant and grows with p, so the more threads, the larger the cost of running in parallel [@karp1990].
 
 \needspace{23\baselineskip}
 
 | algo | n | $f_\text{fit}$ (p ≤ 16) | $f_\text{meas}$ | $S_\text{max}$ (p) | $1/f$ | R² |
 |---|---|---|---|---|---|---|
-| ijk | 100 | 0.240 | 0.232 | 3.6 (16) | 4.2 | – |
+| ijk | 100 | 0.240 | 0.232 | 3.6 (16) | 4.2 | n/a |
 | ijk | 3200 | 0.046 | 0.002 | 12.2 (32) | 22 | 0.98 |
 | ikj | 3200 | 0.065 | 0.010 | 14.0 (24) | 15 | 0.89 |
 | blocked | 200 | 0.358 | 0.259 | 2.6 (24) | 2.8 | 0.81 |
@@ -218,37 +218,37 @@ VmPeak ขยายขนาดขึ้นตามเธรด แต่ RSS �
 
 ![](../figures/09_karp_flatt.png){#fig:karpflatt width=100%}
 
-## ข้อจำกัดของการทดลอง {#sec:limits}
+## Limits of the experiment {#sec:limits}
 
-การทดลองนี้ใช้โหลดหนักอย่างต่อเนื่องทำให้มีช่วงที่อุณหภูมิ CPU สูงถึง 98-100 องศาเซลเซียสซึ่งทำให้ระบบลดความถี่สัญญาณนาฬิกาลงเพื่อป้องกันความเสียหาย
+The runs kept the CPU under heavy load, and at times it reached 98-100 °C, which made the system lower the clock frequency to protect the hardware.
 
-คอมพิวเตอร์เปิดใช้งานโปรแกรมอื่นอยู่เบื้อหลังอาจทำให้เกิดการแย่งใช้งาน CPU หรือหน่วยความจำในบางจังหวะ
+Other programs were open in the background and may have competed for the CPU or memory at times.
 
-ในเมทริกขนาดเล็กเวลาการคำนวนจะเร็วมากทำให้ความผันผวนจาก overhead ส่งอิทธิพลอย่างมากต่อผลการทดลองได้
+For small matrices the computation is so short that overhead noise has a large effect on the results.
 
-# เครื่องมือแสดงแผนที่หน่วยความจำ {#sec:mmap}
+# Memory map tool {#sec:mmap}
 
-## แนวคิดและแหล่งข้อมูล {#sec:proc}
+## Idea and data source {#sec:proc}
 
-เครื่องมือนี้ใช้ข้อมูลจากระบบไฟล์ /proc ซึ่งเป็นอินเทอเฟซที่ linux ใช้เปิดข้อมูลสถานะของ process โดยมี VMA (Virtual Memory Area) คือบล็อกของหน่วยความจำเสมือนที่จองไว้เป็นช่วงต่อเนื่องกันและมีสิทธิ์การเข้าถึง เดียวกัน `/proc/<pid>/maps` แต่ละบรรทัดจะบอกข้อมูล 1 VMA ประกอบด้วยช่วง Address, สิทธิ์ (rwxp) และชื่อไฟล์ที่ถูกแมป `/proc/<pid>/smaps` และอื่นๆ ใช้สำหรับดูสถานะอื่นๆ ข้อจำกัดของระบบ และชี้ไปยังไฟล์รันไทม์ตามลำดับ [@kernelproc; @man_proc_pid_maps; @man_proc_pid_smaps]
+The tool reads the /proc file system, the interface Linux uses to expose the state of each process. A VMA (virtual memory area) is a contiguous block of virtual memory with one set of access permissions. Each line of `/proc/<pid>/maps` describes one VMA: its address range, its permissions (rwxp) and the mapped file. `/proc/<pid>/smaps` and the other files give further state, the process limits and a link to the running executable [@kernelproc; @man_proc_pid_maps; @man_proc_pid_smaps].
 
-เลือกใช้วิธีดึงข้อมูลสถานะจาก OS โดยตรง เพราะสามารถแสดงภาพหน่วยความจำขณะโปรแกรมทำงานได้จริงแบบเรียลไทม์ เห็นผลของ Demand Paging และมี Overhead ต่ำกว่าวิธีอื่น
+Reading the state straight from the OS shows the memory of a running program in real time, makes demand paging visible, and costs less overhead than other methods.
 
-## การออกแบบและการพัฒนา {#sec:mmapdesign}
+## Design and implementation {#sec:mmapdesign}
 
-การทำงานของเครื่องมือถูกแบ่งเป็น 5 ขั้นตอน คือการอ่านข้อมูลสถานะแบบเรียลไทม์จากระบบ การแยก VMA การจัดหมวดหมู่ VMA การรวมข้อมูลบล็อกประเภทเดียวกัน และการแสดงผลออกทางหน้าจอ
+The tool works in five steps: read the live state from the system, parse the VMAs, classify them, merge blocks of the same kind, and draw the result.
 
-กลไกในขั้นตอนการจัดหมวดหมู่ VMA ใช้การออกแบบเป็น Decision tree
+Classification is a decision tree:
 
-1. ตรวจสอบ path แล้วจัดหมวดหมู่ตามนั้น  heap, stack และ kernel
-2. กรณีไม่มีชื่อ จะพิจารณาจากสิทธิ์การเข้าถึงและ flag
-3. กรณีมีไฟล์แมปอยู่ จะตรวจว่าเป็นไฟล์รันไทม์หรือไม่(ใช่จัดเป็น program code/data) หากไม่ใช่จะดูว่าเป็น `.so` หรือไม่ (ถ้าใช่จัดเป็น `library code/data`) ส่วนไฟล์ที่เหลือทั้งหมดจะตกไปอยู่ในหมวด `mapped file` ทั่วไป
+1. Check the path and classify heap, stack and kernel regions from it.
+2. If the region has no name, decide from its permissions and flags.
+3. If a file is mapped, check whether it is the running executable (`program code/data`); if not, whether it is a `.so` (`library code/data`). Every other file falls into the general `mapped file` category.
 
 \needspace{27\baselineskip}
 
-## ความสามารถและวิธีใช้งาน {#sec:mmapusage}
+## Features and usage {#sec:mmapusage}
 
-| คำสั่ง | ผลลัพธ์ |
+| Command | Output |
 |---|---|
 | `python3 mmap.py PID` | snapshot: summary + address-space layout |
 | `python3 mmap.py PID --all` | also list every region (no merging of segments) |
@@ -260,31 +260,30 @@ VmPeak ขยายขนาดขึ้นตามเธรด แต่ RSS �
 
 : {#tab:mmapcmd}
 
-ตารางที่ 8 สรุปคำสั่งการใช้งานทั้งหมดของเครื่องมือเมื่อเรียกคำสั่งเหล่านี้ จะได้ผลลัพธ์การวิเคราะห์หน่วยความจำตามโหมดที่เลือก
+Table 8 lists the commands; each runs the memory analysis in the chosen mode.
 
-รูปที่ 21 และรูปที่ 22 แสดงภาพหน้าจอจริงขณะใช้งานใน Terminal และผลลัพธ์รูปแบบ HTML โดยอ่านโดย สัญลักษณ์ทึบ แทน RSS สัญลักษณ์จาง แทนพื้นที่ที่ระบบจองไว้แต่ยังไม่ถูกใช้งาน, และสัญลักษณ์จุดแนวตั้ง แทนช่องว่างในหน่วยความจำ
+Figures 21 and 22 are real screenshots of the terminal view and the HTML report. Solid marks show RSS, faded marks show memory that is reserved but not yet used, and vertical dots show gaps in the address space.
 
 ![](assets/mmap_terminal.png){#fig:terminal width=100%}
 
 ![](assets/mmap_html_report.png){#fig:html width=80%}
 
-## ตัวอย่างการใช้งานกับโปรแกรมข้อ 1 {#sec:mmapdemo}
+## Watching the program from part 1 {#sec:mmapdemo}
 
-ทดลองใช้เครื่องมือดูการทำงานของโปรแกรมคูณเมตริกซ์ในข้อ 1 ได้ผลเป็นพฤติกรรมการทำงาานของโปรแกรมโดยเริ่มจาก OS โหลด executable code จากไลบารี C เข้าหน่วยความจำจากนั้นเมื่อโปรแกรมจองพื้นที่เมตริกซ์จะเห็น anonymous mmap สูงขึ้นจามด้วย thread stack ขณธประมวลผลแบบ parallel และส่งคืนหมดเมื่อจบการทำงาน โดยในตอนที่ทำ parallel พบ  stack รวมสูงถึง 56 MB แต่กลับมี RSS จริงเพียง 56 KB ซึ่งน่าจะเกิดจากการทำ demand paging [@silberschatz2018]
+Watching the matrix multiplication program from part 1 shows how it behaves. The OS first loads the executable and the C library into memory. When the program allocates the matrices, anonymous mmap grows, thread stacks appear during the parallel phase, and everything is returned when the program ends. During the parallel phase the thread stacks reserve 56 MB in total but hold only 56 KB of real RSS, which is most likely demand paging [@silberschatz2018].
 
 ![](assets/still_mmap_parallel_run.png){#fig:mmaprun width=100%}
 
-## ความปลอดภัยและข้อจำกัด {#sec:safety2}
+## Safety and limits {#sec:safety2}
 
-เครื่องมือใช้วิธีการอ่านข้อมูลอย่างเดียว ไม่มีการใช้สิทธิ์ root ในการแทรกแทรงโปรเซสสามารถดูได้เฉพาะโปรเซสที่เป็นสิทธิ์ของผู้ใช้งานเองเท่านั้น ใช้ได้แค่กับ linux เท่านั้นเนื่องจากใช้งานจากใช้งานระบบไฟล์ /proc
+The tool only reads. It needs no root rights and does not interfere with any process, so it can inspect only the processes the user owns. It works only on Linux, because it depends on /proc.
 
-# สรุป {#sec:conclusion}
+# Conclusion {#sec:conclusion}
 
-จากการทดลองแสดงว่าวิธีการเข้าถึงหน่วยความทรงจำมีความสำคัญต่อประสิทธิภาพมากกว่าการเพิ่มเธรดเพียงอย่างเดียว และจากการประเมิณด้วย Amdahl rule พบสัดส่วนการทำงานแบบ serial ที่ประมาณ 0.03-0.05 ซึ่งค่าที่ได้นี้มีส่วนมาจาก overhead ของการทำ parallel ด้วยจึงไม่ใช้ส่วนของการทำ serial โดยสมบูรณ์ และเครื่องมือที่สร้างแผนที่หน่วยความทรงจำที่สร้างขึ้นสามารถติดตามหน่วยความจำขณะรันไทม์ได้
+The experiments show that the memory access pattern matters more for performance than adding threads alone. The Amdahl fit gives a serial fraction of about 0.03-0.05; part of that is parallel overhead, so it is not purely serial work. The memory map tool can follow a program's memory while it runs.
 
-# การใช้ AI {#sec:ai}
+# Use of AI {#sec:ai}
 
-ในการจัดทำโครงการทั้งหมดใช้เครื่องมือ AI ช่วยเหลือคือ AI coding assistant ใน VS Code เป็นหลักโดยงานที่ใช้เครื่องมือนี้ช่วยเหลือประกอบด้วย code (โปรแกรมการคูณ `mmap.py` ทั้งโปรแกรม รวมถึง `run_bench.py`, `analyze.py`, `check_submission.py` (สคริปต์ตรวจก่อนส่งงาน ไม่ได้ใส่ใน repo นี้), ระบบ build PDF และ outline ที่มีตัวเลขกับเช็กลิสต์) รวมถึงตอบคำถามข้อสงสัยของผู้จัดทำโครงการ ในรายงานเครื่องมือมีบทบาทเป็นผู้ตรวจสอบความถูกต้องข้อมูลและผู้จัดโครงร่างเอกสารเท่านั้น เนื้อหารายงานถูกเขียนโดยผู้จัดทำเอง
+The project used an AI coding assistant in VS Code as its main AI tool. It helped with code (the multiplication program, all of `mmap.py`, `run_bench.py`, `analyze.py`, `check_submission.py` (a pre-submission check script that is not in this repo), the PDF build, and an outline with numbers and a checklist) and answered the author's questions. For the report, the tool only checked facts and organised the outline; the author wrote the text.
 
-การตรวจสอบความถูกต้องของเครื่องมือผู้จัดทำตรวจสอบโดยการคำนวนย้อนกลับผลการทดลองเทียบกับทฤษฏีเพื่อดูความแตกต่าง
-
+The author checked the tool's output by recomputing the results by hand and comparing them with theory.

@@ -78,7 +78,7 @@ $if(has-frontmatter)$
 \frontmatter
 $endif$
 $if(title)$
-% ---- หน้าปก ----
+% ---- title page ----
 \begin{titlepage}
 \centering
 \vspace*{2.5cm}
@@ -88,12 +88,12 @@ $if(subtitle)$
 {\Large $subtitle$\par}
 $endif$
 \vfill
-{\large จัดทำโดย\par}
+{\large Prepared by\par}
 \vspace{0.4cm}
 {\Large\bfseries $for(author)$$author$$sep$\\ $endfor$\par}
 $if(student-id)$
 \vspace{0.2cm}
-{\large รหัสนิสิต $student-id$\par}
+{\large Student ID $student-id$\par}
 $endif$
 \vfill
 $if(course)$
